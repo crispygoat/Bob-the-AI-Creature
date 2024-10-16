@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Creature Evolution Simulation</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: black;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="simulationCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById("simulationCanvas");
+        const ctx = canvas.getContext("2d");
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const creatures = [];
+        const maxCreatures = 200;
+
+        class Creature {
+            constructor(x, y, size) {
+                this.x = x;
+                this.y = y;
+                this.size = size;
+                this.color = `hsl(${Math.random() * 360}, 100%, 50%)`;
+                this.velocity = {
+                    x: (Math.random() - 0.5) * 2,
+                    y: (Math.random() - 0.5) * 2,
+                };
+                this.lifespan = 400 + Math.random() * 200;
+                this.age = 0;
+                this.relationships = [];
+                this.groupBehaviorFactor = 1;
+                this.reproductionCooldown = 200;
+                this.maxOffspring = 1;
+            }
+
+            update() {
+                this.x += this.velocity.x * this.groupBehaviorFactor;
+                this.y += this.velocity.y * this.groupBehaviorFactor;
+
+                if (this.x < 0 || this.x > canvas.width) {
+                    this.velocity.x *= -1;
+                }
+                if (this.y < 0 || this.y > canvas.height) {
+                    this.velocity.y *= -1;
+                }
+
+                this.age++;
+                if (this.age > this.lifespan) {
+                    this.die();
+                }
+
+                this.formRelationships();
+                this.adjustBehaviorBasedOnConnections();
+                this.applyGravityToConnections();
+                this.tryReproduce();
+            }
+
+            formRelationships() {
+                this.relationships = creatures.filter(creature => {
+                    const distance = Math.hypot(creature.x - this.x, creature.y - this.y);
+                    return distance < 100 && creature !== this;
+                });
+            }
+
+            adjustBehaviorBasedOnConnections() {
+                this.groupBehaviorFactor = 1 + (this.relationships.length * 0.05);
+                this.lifespan += this.relationships.length * 0.5;
+            }
+
+            applyGravityToConnections() {
+                this.relationships.forEach(partner => {
+                    const dx = partner.x - this.x;
+                    const dy = partner.y - this.y;
+                    const distance = Math.hypot(dx, dy);
+                    const gravityStrength = 0.01;
+
+                    if (distance > 0) {
+                        this.velocity.x += (dx / distance) * gravityStrength;
+                        this.velocity.y += (dy / distance) * gravityStrength;
+                    }
+                });
+            }
+
+            tryReproduce() {
+                if (this.reproductionCooldown <= 0 && creatures.length < maxCreatures) {
+                    if (this.relationships.length > 0) {
+                        const partner = this.relationships[Math.floor(Math.random() * this.relationships.length)];
+                        const distance = Math.hypot(partner.x - this.x, partner.y - this.y);
+                        if (distance < 50) {
+                            const numOffspring = Math.min(this.maxOffspring, 1);
+                            for (let i = 0; i < numOffspring; i++) {
+                                const size = this.size * 0.8;
+                                if (size > 5) {
+                                    creatures.push(new Creature(this.x, this.y, size));
+                                }
+                            }
+                            this.reproductionCooldown = 500;
+                        }
+                    }
+                } else {
+                    this.reproductionCooldown--;
+                }
+            }
+
+            die() {
+                const index = creatures.indexOf(this);
+                if (index > -1) {
+                    creatures.splice(index, 1);
+                }
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.closePath();
+
+                // Add glowing effect
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = this.color;
+
+                // Draw relationships
+                ctx.beginPath();
+                this.relationships.forEach(partner => {
+                    ctx.moveTo(this.x, this.y);
+                    ctx.lineTo(partner.x, partner.y);
+                });
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = 0.5;
+                ctx.stroke();
+                ctx.closePath();
+            }
+        }
+
+        function initializeCreatures(num) {
+            for (let i = 0; i < num; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                const size = 10 + Math.random() * 10;
+                creatures.push(new Creature(x, y, size));
+            }
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            creatures.forEach(creature => {
+                creature.update();
+                creature.draw();
+            });
+
+            requestAnimationFrame(animate);
+        }
+
+        window.addEventListener("resize", () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        initializeCreatures(20);
+        animate();
+    </script>
+</body>
+</html>
