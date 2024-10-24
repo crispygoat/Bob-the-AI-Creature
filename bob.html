@@ -13,165 +13,956 @@
         canvas {
             display: block;
         }
+        #menu {
+            position: absolute;
+            top: 10px;
+            left: 50px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 5px;
+            color: white;
+            font-size: 10pt;
+            z-index: 10;
+        }
+        #toggleMenuButton {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 10px;
+            z-index: 11;
+            background: #333;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        #startSimulationButton {
+            padding: 10px;
+            background: #28a745;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        .button-container {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .reset-button {
+            padding: 8px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            transition: background-color 0.2s;
+        }
+        .reset-button:hover {
+            background: #c82333;
+        }
+        .emergency-alert {
+            color: #ff4444;
+            font-weight: bold;
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
     </style>
 </head>
 <body>
+    <button id="toggleMenuButton" onclick="toggleMenu()" style="background: none; border: none; position: absolute; top: 10px; left: 10px; z-index: 12;">
+        <svg width="24" height="24" xmlns="http://www.w3.org/2000/svg" fill="white" viewBox="0 0 24 24">
+            <path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/>
+        </svg>
+    </button>
+    <div id="menu">
+        <div class="button-container">
+            <button id="startSimulationButton" onclick="startSimulation()">START SIMULATION</button>
+            <button class="reset-button" onclick="resetSimulation()" title="Reset Simulation">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M3 12a9 9 0 1 1 9 9 9.75 9.75 0 0 1-6.74-2.74" />
+                    <path d="M3 12h6" />
+                    <path d="M3 6v6" />
+                </svg>
+            </button>
+        </div>
+        <div id="stats">
+            <label for="cityInput" style="display: block; margin-bottom: 5px;">Enter City Name:</label>
+            <input type="text" id="cityInput" value="New York" style="margin-bottom: 10px;"/>
+            <button onclick="updateCity()">Update City</button>
+            <br>
+            <label for="maxCreaturesInput" style="display: block; margin-top: 10px;">Enter Maximum Creatures:</label>
+            <input type="number" id="maxCreaturesInput" value="200" style="margin-bottom: 10px;"/>
+            <button onclick="updateMaxCreatures()">Update Max Creatures</button>
+            <br>
+            <p id="creaturesSpawned">Creatures Spawned: 0</p>
+            <p id="creaturesDied">Creatures Died: 0</p>
+            <p id="mutations">Mutations: 0</p>
+            <p id="temperature">Current Temperature: 96°F</p>
+            <p id="foodCount">Food Available: 0</p>
+            <p id="simulationStart">Simulation Start: Not started</p>
+            <p id="lastDeath">Last Death: None</p>
+            <p id="totalTimeAlive">Total Time Alive: 00:00:00.000</p>
+            <p id="emergencyStatus" class="emergency-alert" style="display: none;">EMERGENCY MODE ACTIVE!</p>
+        </div>
+    </div>
     <canvas id="simulationCanvas"></canvas>
-    <script>
-        const canvas = document.getElementById("simulationCanvas");
-        const ctx = canvas.getContext("2d");
+	<script>
+    const canvas = document.getElementById("simulationCanvas");
+    const ctx = canvas.getContext("2d", { alpha: false });
+    ctx.imageSmoothingEnabled = true;
 
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 
-        const creatures = [];
-        const maxCreatures = 200;
+    // Performance optimization variables
+    let lastTime = 0;
+    const FRAME_RATE = 60;
+    const FRAME_INTERVAL = 1000 / FRAME_RATE;
+    let resizeTimeout;
 
-        class Creature {
-            constructor(x, y, size) {
-                this.x = x;
-                this.y = y;
-                this.size = size;
-                this.color = `hsl(${Math.random() * 360}, 100%, 50%)`;
-                this.velocity = {
-                    x: (Math.random() - 0.5) * 2,
-                    y: (Math.random() - 0.5) * 2,
-                };
-                this.lifespan = 400 + Math.random() * 200;
-                this.age = 0;
-                this.relationships = [];
-                this.groupBehaviorFactor = 1;
-                this.reproductionCooldown = 200;
-                this.maxOffspring = 1;
+    // Core simulation variables
+    const creatures = [];
+    const foodParticles = [];
+    let maxCreatures = Math.min(200, Math.floor(window.innerWidth * window.innerHeight / 10000));
+    let minFoodParticles = 50;
+    let totalReplications = 0;
+    let totalDeaths = 0;
+    let totalMutations = 0;
+    let environmentTemperature = 96;
+    let cityName = 'New York';
+    let mouseX = -1000;
+    let mouseY = -1000;
+    let menuVisible = true;
+    let quadtree;
+    let simulationRunning = false;
+    let simulationStartTime = null;
+    let lastDeathTime = null;
+    let totalTimeAlive = 0;
+    let emergencyMode = false;
+    let initialCreatureCount = 69;
+
+    function formatTime(milliseconds) {
+        const hours = Math.floor(milliseconds / (1000 * 60 * 60));
+        const minutes = Math.floor((milliseconds % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((milliseconds % (1000 * 60)) / 1000);
+        const ms = milliseconds % 1000;
+        
+        return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
+    }
+
+    class FoodParticle {
+        constructor(x, y) {
+            this.x = x;
+            this.y = y;
+            this.energy = 50;
+            this.lifeBonus = Math.random() * 50;
+            this.color = `hsl(${120 + Math.random() * 30}, 100%, 50%)`;
+            this.size = 1.5;
+        }
+
+        draw(ctx) {
+            // Drawing handled in batch by animate function
+            return;
+        }
+    }
+
+    class Rectangle {
+        constructor(x, y, w, h) {
+            this.x = x;
+            this.y = y;
+            this.w = w;
+            this.h = h;
+        }
+
+        contains(point) {
+            return (
+                point.x >= this.x &&
+                point.x < this.x + this.w &&
+                point.y >= this.y &&
+                point.y < this.y + this.h
+            );
+        }
+
+        intersects(range) {
+            return !(
+                range.x > this.x + this.w ||
+                range.x + range.w < this.x ||
+                range.y > this.y + this.h ||
+                range.y + range.h < this.y
+            );
+        }
+    }
+
+    class QuadTree {
+        constructor(boundary, capacity) {
+            this.boundary = boundary;
+            this.capacity = capacity;
+            this.points = [];
+            this.divided = false;
+        }
+
+        clear() {
+            this.points = [];
+            this.divided = false;
+            this.northeast = null;
+            this.northwest = null;
+            this.southeast = null;
+            this.southwest = null;
+        }
+
+        subdivide() {
+            const { x, y, w, h } = this.boundary;
+            const halfWidth = w / 2;
+            const halfHeight = h / 2;
+
+            const nw = new Rectangle(x, y, halfWidth, halfHeight);
+            const ne = new Rectangle(x + halfWidth, y, halfWidth, halfHeight);
+            const sw = new Rectangle(x, y + halfHeight, halfWidth, halfHeight);
+            const se = new Rectangle(x + halfWidth, y + halfHeight, halfWidth, halfHeight);
+
+            this.northwest = new QuadTree(nw, this.capacity);
+            this.northeast = new QuadTree(ne, this.capacity);
+            this.southwest = new QuadTree(sw, this.capacity);
+            this.southeast = new QuadTree(se, this.capacity);
+
+            this.divided = true;
+
+            // Redistribute existing points
+            for (const point of this.points) {
+                this.northwest.insert(point) ||
+                this.northeast.insert(point) ||
+                this.southwest.insert(point) ||
+                this.southeast.insert(point);
+            }
+            this.points = [];
+        }
+
+        insert(point) {
+            if (!this.boundary.contains(point)) {
+                return false;
             }
 
-            update() {
+            if (this.points.length < this.capacity && !this.divided) {
+                this.points.push(point);
+                return true;
+            }
+
+            if (!this.divided) {
+                this.subdivide();
+            }
+
+            return (
+                this.northwest.insert(point) ||
+                this.northeast.insert(point) ||
+                this.southwest.insert(point) ||
+                this.southeast.insert(point)
+            );
+        }
+
+        query(range, found = []) {
+            if (!this.boundary.intersects(range)) {
+                return found;
+            }
+
+            if (this.divided) {
+                this.northwest.query(range, found);
+                this.northeast.query(range, found);
+                this.southwest.query(range, found);
+                this.southeast.query(range, found);
+            } else {
+                for (const point of this.points) {
+                    if (range.contains(point)) {
+                        found.push(point);
+                    }
+                }
+            }
+
+            return found;
+        }
+    }
+
+    // Spatial hash grid for food particles
+    class SpatialHashGrid {
+        constructor(cellSize) {
+            this.cellSize = cellSize;
+            this.grid = new Map();
+        }
+
+        clear() {
+            this.grid.clear();
+        }
+
+        getKey(x, y) {
+            const gridX = Math.floor(x / this.cellSize);
+            const gridY = Math.floor(y / this.cellSize);
+            return `${gridX},${gridY}`;
+        }
+
+        insert(particle) {
+            const key = this.getKey(particle.x, particle.y);
+            if (!this.grid.has(key)) {
+                this.grid.set(key, []);
+            }
+            this.grid.get(key).push(particle);
+        }
+
+        queryRange(x, y, radius) {
+            const nearby = [];
+            const minX = Math.floor((x - radius) / this.cellSize);
+            const maxX = Math.floor((x + radius) / this.cellSize);
+            const minY = Math.floor((y - radius) / this.cellSize);
+            const maxY = Math.floor((y + radius) / this.cellSize);
+
+            for (let gridX = minX; gridX <= maxX; gridX++) {
+                for (let gridY = minY; gridY <= maxY; gridY++) {
+                    const key = `${gridX},${gridY}`;
+                    const cell = this.grid.get(key);
+                    if (cell) {
+                        nearby.push(...cell);
+                    }
+                }
+            }
+
+            return nearby;
+        }
+    }
+
+    const foodGrid = new SpatialHashGrid(50);
+</script>
+<script>
+    class Creature {
+        constructor(x, y, size, mutations = {}) {
+            this.x = x;
+            this.y = y;
+            this.size = size;
+            this.color = mutations.color || `hsl(${Math.random() * 360}, 100%, 80%)`;
+            this.velocity = {
+                x: (Math.random() - 0.5) * 2 * (mutations.speedMultiplier || 1),
+                y: (Math.random() - 0.5) * 2 * (mutations.speedMultiplier || 1),
+            };
+            this.energy = 100;
+            this.lifespan = mutations.lifespan || (800 + Math.random() * 200);
+            this.age = 0;
+            this.relationships = [];
+            this.groupBehaviorFactor = 1;
+            this.reproductionCooldown = 300;
+            this.maxOffspring = 1;
+            this.reproductionThreshold = 0.3;
+            this.reproductionEnergyCost = 50;
+            
+            this.transparency = mutations.transparency || 1.0;
+            this.temperatureResistance = mutations.temperatureResistance || 1.0;
+            this.adaptability = mutations.adaptability || 1.0;
+            this.energyEfficiency = mutations.energyEfficiency || 1.0;
+            this.socialBonus = mutations.socialBonus || 1.0;
+            
+            this.gravityStrength = mutations.gravityStrength || 0.01;
+            this.mutatingColor = mutations.mutatingColor || false;
+            this.invertedBehavior = mutations.invertedBehavior || false;
+            this.relationshipStrength = 0;
+            this.isEmergencyClone = mutations.isEmergencyClone || false;
+            
+            this.boundingBox = new Rectangle(x - size, y - size, size * 2, size * 2);
+            
+            this.adjustBasedOnTemperature();
+            document.getElementById("creaturesSpawned").innerText = `Creatures Spawned: ${creatures.length}`;
+        }
+
+        adjustBasedOnTemperature() {
+            const temperatureEffect = (Math.abs(environmentTemperature - 96) / 10) / this.temperatureResistance;
+            if (environmentTemperature > 98) {
+                this.velocity.x *= 1 + temperatureEffect;
+                this.velocity.y *= 1 + temperatureEffect;
+                this.size *= 1 + (temperatureEffect * 0.05);
+                this.color = `hsl(0, 100%, ${Math.min(85, 55 + temperatureEffect * 10)}%)`;
+                this.reproductionCooldown = Math.max(200, this.reproductionCooldown - temperatureEffect * 50);
+                this.lifespan += temperatureEffect * 5;
+                if (Math.random() < temperatureEffect * 0.1) {
+                    this.mutatingColor = true;
+                }
+            } else if (environmentTemperature < 96) {
+                this.velocity.x *= 1 - temperatureEffect;
+                this.velocity.y *= 1 - temperatureEffect;
+                this.size *= 1 - (temperatureEffect * 0.05);
+                if (environmentTemperature <= 35) {
+                    this.lifespan -= temperatureEffect * 15 / this.temperatureResistance;
+                    this.color = `hsl(${Math.random() * 360}, 50%, ${Math.max(30 - temperatureEffect * 10, 20)}%)`;
+                    this.transparency = 0.7;
+                    this.velocity.x *= 0.1;
+                    this.velocity.y *= 0.1;
+                    this.gravityStrength *= 0.1;
+                } else {
+                    this.color = `hsl(${Math.random() * 360}, 100%, ${Math.max(60 - temperatureEffect * 20, 35)}%)`;
+                }
+                this.reproductionCooldown += temperatureEffect * 25;
+                this.lifespan -= temperatureEffect * 5 / this.temperatureResistance;
+            }
+            this.updateBoundingBox();
+        }
+
+        updateBoundingBox() {
+            this.boundingBox.x = this.x - this.size;
+            this.boundingBox.y = this.y - this.size;
+            this.boundingBox.w = this.size * 2;
+            this.boundingBox.h = this.size * 2;
+        }
+
+        searchForFood() {
+            const nearbyFood = foodGrid.queryRange(this.x, this.y, 50);
+            for (const food of nearbyFood) {
+                const dx = food.x - this.x;
+                const dy = food.y - this.y;
+                if (dx * dx + dy * dy <= 2500) {
+                    const energyGain = food.energy * this.energyEfficiency;
+                    this.energy += energyGain;
+                    this.lifespan += food.lifeBonus;
+                    const index = foodParticles.indexOf(food);
+                    if (index > -1) {
+                        foodParticles.splice(index, 1);
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        update() {
+            this.energy -= 0.1 / this.energyEfficiency;
+            if (this.energy <= 0) {
+                this.die();
+                return false;
+            }
+
+            if (this.mutatingColor) {
+                this.color = `hsl(${(Math.random() * 360)}, 100%, 60%)`;
+            }
+
+            const energyCost = 0.05 / this.energyEfficiency;
+            if (this.invertedBehavior) {
+                this.x -= this.velocity.x * this.groupBehaviorFactor;
+                this.y -= this.velocity.y * this.groupBehaviorFactor;
+            } else {
                 this.x += this.velocity.x * this.groupBehaviorFactor;
                 this.y += this.velocity.y * this.groupBehaviorFactor;
+            }
+            this.energy -= energyCost;
 
-                if (this.x < 0 || this.x > canvas.width) {
-                    this.velocity.x *= -1;
-                }
-                if (this.y < 0 || this.y > canvas.height) {
-                    this.velocity.y *= -1;
-                }
-
-                this.age++;
-                if (this.age > this.lifespan) {
-                    this.die();
-                }
-
-                this.formRelationships();
-                this.adjustBehaviorBasedOnConnections();
-                this.applyGravityToConnections();
-                this.tryReproduce();
+            if (this.energy < 70) {
+                this.searchForFood();
             }
 
-            formRelationships() {
-                this.relationships = creatures.filter(creature => {
+            const mouseDist = Math.hypot(this.x - mouseX, this.y - mouseY);
+            if (mouseDist < 100) {
+                const avoidFactor = 50 / mouseDist;
+                this.velocity.x += (this.x - mouseX) * avoidFactor * 0.01;
+                this.velocity.y += (this.y - mouseY) * avoidFactor * 0.01;
+            }
+
+            if (this.x < 0) {
+                this.x = 0;
+                this.velocity.x = Math.abs(this.velocity.x);
+            } else if (this.x > canvas.width) {
+                this.x = canvas.width;
+                this.velocity.x = -Math.abs(this.velocity.x);
+            }
+            if (this.y < 0) {
+                this.y = 0;
+                this.velocity.y = Math.abs(this.velocity.y);
+            } else if (this.y > canvas.height) {
+                this.y = canvas.height;
+                this.velocity.y = -Math.abs(this.velocity.y);
+            }
+
+            this.age++;
+            if (this.age > this.lifespan) {
+                this.die();
+                return false;
+            }
+
+            this.updateBoundingBox();
+            this.formRelationships();
+            this.adjustBehaviorBasedOnConnections();
+            this.applyGravityToConnections();
+            this.tryReproduce();
+            return true;
+        }
+
+        formRelationships() {
+            const range = new Rectangle(this.x - 150, this.y - 150, 300, 300);
+            this.relationships = quadtree.query(range, [])
+                .filter(creature => creature !== this)
+                .filter(creature => {
                     const distance = Math.hypot(creature.x - this.x, creature.y - this.y);
-                    return distance < 100 && creature !== this;
-                });
+                    return distance < 200;
+                })
+                .sort((a, b) => {
+                    const distA = Math.hypot(a.x - this.x, a.y - this.y);
+                    const distB = Math.hypot(b.x - this.x, b.y - this.y);
+                    return distA - distB;
+                })
+                .slice(0, 8);
+            
+            this.relationshipStrength = Math.min(this.relationships.length * 0.1, 1) * this.socialBonus;
+        }
+
+        adjustBehaviorBasedOnConnections() {
+            this.groupBehaviorFactor = 1 + (this.relationships.length * 0.05 * this.socialBonus);
+            if (this.relationships.length > 0) {
+                this.energy += 0.01 * this.relationships.length * this.socialBonus;
             }
+        }
 
-            adjustBehaviorBasedOnConnections() {
-                this.groupBehaviorFactor = 1 + (this.relationships.length * 0.05);
-                this.lifespan += this.relationships.length * 0.5;
+        applyGravityToConnections() {
+            for (const partner of this.relationships) {
+                const dx = partner.x - this.x;
+                const dy = partner.y - this.y;
+                const distance = Math.hypot(dx, dy);
+                
+                if (distance > 0) {
+                    const force = this.gravityStrength / distance;
+                    this.velocity.x += dx * force;
+                    this.velocity.y += dy * force;
+                }
             }
+        }
 
-            applyGravityToConnections() {
-                this.relationships.forEach(partner => {
-                    const dx = partner.x - this.x;
-                    const dy = partner.y - this.y;
-                    const distance = Math.hypot(dx, dy);
-                    const gravityStrength = 0.01;
+        tryReproduce() {
+            const baseCooldown = 500;
+            const adjustedCooldown = baseCooldown * (1 - this.relationshipStrength * 0.3);
+            
+            if (this.reproductionCooldown <= 0 && 
+                creatures.length < maxCreatures && 
+                this.energy > this.reproductionEnergyCost &&
+                this.relationshipStrength > this.reproductionThreshold) {
+                
+                if (this.relationships.length > 0) {
+                    const partner = this.relationships[0];
+                    const distance = Math.hypot(partner.x - this.x, partner.y - this.y);
+                    
+                    if (distance < 50) {
+                        const baseOffspring = Math.min(this.maxOffspring, 1);
+                        const bonusOffspring = Math.random() < this.relationshipStrength ? 1 : 0;
+                        let totalOffspring = baseOffspring + bonusOffspring;
 
-                    if (distance > 0) {
-                        this.velocity.x += (dx / distance) * gravityStrength;
-                        this.velocity.y += (dy / distance) * gravityStrength;
-                    }
-                });
-            }
+                        if (this.isEmergencyClone) {
+                            totalOffspring *= 2;
+                        }
 
-            tryReproduce() {
-                if (this.reproductionCooldown <= 0 && creatures.length < maxCreatures) {
-                    if (this.relationships.length > 0) {
-                        const partner = this.relationships[Math.floor(Math.random() * this.relationships.length)];
-                        const distance = Math.hypot(partner.x - this.x, partner.y - this.y);
-                        if (distance < 50) {
-                            const numOffspring = Math.min(this.maxOffspring, 1);
-                            for (let i = 0; i < numOffspring; i++) {
-                                const size = this.size * 0.8;
-                                if (size > 5) {
-                                    creatures.push(new Creature(this.x, this.y, size));
+                        this.energy -= this.reproductionEnergyCost;
+
+                        for (let i = 0; i < totalOffspring; i++) {
+                            const size = this.size * (this.isEmergencyClone ? 1.2 : 0.8);
+                            if (size > 5) {
+                                let mutations = this.generateMutations(partner);
+                                mutations.isEmergencyClone = this.isEmergencyClone;
+                                
+                                if (creatures.length < maxCreatures) {
+                                    creatures.push(new Creature(this.x, this.y, size, mutations));
                                 }
                             }
-                            this.reproductionCooldown = 500;
                         }
+                        this.reproductionCooldown = adjustedCooldown;
                     }
+                }
+            } else {
+                this.reproductionCooldown--;
+            }
+        }
+
+        generateMutations(partner) {
+            let mutations = {
+                color: this.mixColors(this.color, partner.color),
+                transparency: this.transparency,
+                temperatureResistance: this.temperatureResistance * (0.9 + Math.random() * 0.2),
+                adaptability: this.adaptability * (0.9 + Math.random() * 0.2),
+                energyEfficiency: this.energyEfficiency * (0.9 + Math.random() * 0.2),
+                socialBonus: this.socialBonus * (0.9 + Math.random() * 0.2),
+                lifespan: (800 + Math.random() * 200) * (0.9 + Math.random() * 0.2)
+            };
+
+            totalReplications++;
+            if (totalReplications % 100 === 0) {
+                totalMutations++;
+                const mutationChance = Math.random();
+                if (mutationChance < 0.2) {
+                    mutations.gravityStrength = 0.02 + Math.random() * 0.03;
+                } else if (mutationChance < 0.4) {
+                    mutations.speedMultiplier = 0.5 + Math.random();
+                } else if (mutationChance < 0.6) {
+                    mutations.mutatingColor = true;
+                } else if (mutationChance < 0.8) {
+                    mutations.color = `hsl(${Math.random() * 360}, 100%, 70%)`;
                 } else {
-                    this.reproductionCooldown--;
+                    mutations.invertedBehavior = true;
                 }
+                document.getElementById("mutations").innerText = `Mutations: ${totalMutations}`;
             }
 
-            die() {
-                const index = creatures.indexOf(this);
-                if (index > -1) {
-                    creatures.splice(index, 1);
+            return mutations;
+        }
+
+        mixColors(color1, color2) {
+            try {
+                const hsl1 = this.extractHSL(color1);
+                const hsl2 = this.extractHSL(color2);
+                if (hsl1 && hsl2) {
+                    const mixedH = (hsl1.h + hsl2.h) / 2;
+                    const mixedS = Math.round((hsl1.s + hsl2.s) / 2);
+                    const mixedL = Math.round((hsl1.l + hsl2.l) / 2);
+                    return `hsl(${mixedH}, ${mixedS}%, ${mixedL}%)`;
+                }
+            } catch (error) {
+                console.error("Color mixing error, using default");
+            }
+            return `hsl(${Math.random() * 360}, 100%, 70%)`;
+        }
+
+        extractHSL(color) {
+            const result = /hsl\((\d+\.?\d*),\s*(\d+\.?\d*)%?,\s*(\d+\.?\d*)%?\)/.exec(color);
+            return result ? {
+                h: parseFloat(result[1]),
+                s: parseFloat(result[2]),
+                l: parseFloat(result[3])
+            } : null;
+        }
+
+        die() {
+            const index = creatures.indexOf(this);
+            if (index > -1) {
+                const currentTime = new Date();
+                lastDeathTime = currentTime;
+                document.getElementById("lastDeath").innerText = 
+                    `Last Death: ${currentTime.toLocaleString()}`;
+                
+                if (simulationStartTime) {
+                    const timeAlive = currentTime - simulationStartTime;
+                    totalTimeAlive += timeAlive;
+                    document.getElementById("totalTimeAlive").innerText = 
+                        `Total Time Alive: ${formatTime(totalTimeAlive)}`;
+                }
+                
+                creatures.splice(index, 1);
+                totalDeaths++;
+                document.getElementById("creaturesDied").innerText = 
+                    `Creatures Died: ${totalDeaths}`;
+                
+                if (creatures.length <= 10 && !emergencyMode) {
+                    activateEmergencyMode();
                 }
             }
+        }
 
-            draw() {
+       draw() {
+            if (this.x < -this.size * 2 || this.x > canvas.width + this.size * 2 ||
+                this.y < -this.size * 2 || this.y > canvas.height + this.size * 2) {
+                return;
+            }
+
+            // Draw relationship lines with enhanced effects
+            if (this.relationships.length > 0) {
+                ctx.globalAlpha = this.transparency * 0.5;
                 ctx.beginPath();
-                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-                ctx.fillStyle = this.color;
-                ctx.fill();
+                for (const partner of this.relationships) {
+                    const distance = Math.hypot(partner.x - this.x, partner.y - this.y);
+                    if (distance < 200) {
+                        const gradient = ctx.createLinearGradient(
+                            this.x, this.y, partner.x, partner.y
+                        );
+                        gradient.addColorStop(0, this.color);
+                        gradient.addColorStop(1, partner.color);
+                        
+                        ctx.strokeStyle = gradient;
+                        ctx.lineWidth = Math.max(0.2, 1.5 - (distance / 200));
+                        ctx.moveTo(this.x, this.y);
+                        ctx.lineTo(partner.x, partner.y);
+                        ctx.stroke();
+                    }
+                }
                 ctx.closePath();
+            }
 
-                // Add glowing effect
-                ctx.shadowBlur = 20;
+            // Draw creature with enhanced effects
+            ctx.globalAlpha = this.transparency;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            
+            // Add glow effect
+            if (this.isEmergencyClone) {
+                ctx.shadowBlur = 15;
                 ctx.shadowColor = this.color;
-
-                // Draw relationships
-                ctx.beginPath();
-                this.relationships.forEach(partner => {
-                    ctx.moveTo(this.x, this.y);
-                    ctx.lineTo(partner.x, partner.y);
-                });
-                ctx.strokeStyle = this.color;
-                ctx.lineWidth = 0.5;
-                ctx.stroke();
-                ctx.closePath();
+            } else {
+                ctx.shadowBlur = environmentTemperature <= 35 ? 10 : 5;
+                ctx.shadowColor = environmentTemperature <= 35 ? 'rgba(255, 255, 255, 0.5)' : this.color;
             }
-        }
+            
+            ctx.fillStyle = this.color;
+            ctx.fill();
+            ctx.closePath();
 
-        function initializeCreatures(num) {
-            for (let i = 0; i < num; i++) {
-                const x = Math.random() * canvas.width;
-                const y = Math.random() * canvas.height;
-                const size = 10 + Math.random() * 10;
-                creatures.push(new Creature(x, y, size));
+            // Reset context properties
+            ctx.globalAlpha = 1;
+            ctx.shadowBlur = 0;
+        }
+    }
+</script>
+<script>
+    function activateEmergencyMode() {
+        emergencyMode = true;
+        document.getElementById("emergencyStatus").style.display = "block";
+        
+        const existingCreatures = [...creatures];
+        
+        existingCreatures.forEach(creature => {
+            creature.reproductionCooldown = 0;
+            creature.reproductionEnergyCost /= 2;
+            creature.maxOffspring *= 2;
+            
+            // Create 4 enhanced copies
+            for(let i = 0; i < 4; i++) {
+                const mutations = {
+                    color: creature.color,
+                    temperatureResistance: creature.temperatureResistance * 1.2,
+                    adaptability: creature.adaptability * 1.2,
+                    energyEfficiency: creature.energyEfficiency * 1.2,
+                    socialBonus: creature.socialBonus * 1.2,
+                    speedMultiplier: 1.5,
+                    transparency: 0.7,
+                    isEmergencyClone: true
+                };
+                
+                const emergencyClone = new Creature(
+                    creature.x + (Math.random() - 0.5) * 50,
+                    creature.y + (Math.random() - 0.5) * 50,
+                    creature.size * 1.5,
+                    mutations
+                );
+                
+                emergencyClone.reproductionCooldown = 0;
+                emergencyClone.reproductionEnergyCost /= 4;
+                emergencyClone.maxOffspring *= 4;
+                emergencyClone.lifespan *= 1.5;
+                emergencyClone.energy = 100;
+                
+                creatures.push(emergencyClone);
             }
+        });
+        
+        // Attract to center with enhanced visual effect
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        
+        creatures.forEach(creature => {
+            const dx = centerX - creature.x;
+            const dy = centerY - creature.y;
+            const distance = Math.hypot(dx, dy);
+            if (distance > 0) {
+                creature.velocity.x += (dx / distance) * 0.5;
+                creature.velocity.y += (dy / distance) * 0.5;
+            }
+        });
+    }
+
+    function spawnFood(amount) {
+        for (let i = 0; i < amount; i++) {
+            const x = Math.random() * canvas.width;
+            const y = Math.random() * canvas.height;
+            foodParticles.push(new FoodParticle(x, y));
         }
+    }
 
-        function animate() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+    function maintainEcosystem() {
+        if (foodParticles.length < minFoodParticles) {
+            spawnFood(5);
+        }
+        
+        if (creatures.length < 20) {
+            spawnFood(10);
+            Creature.prototype.reproductionEnergyCost = 30;
+        } else {
+            Creature.prototype.reproductionEnergyCost = 50;
+        }
+        
+        foodGrid.clear();
+        foodParticles.forEach(food => foodGrid.insert(food));
+        
+        document.getElementById("foodCount").innerText = `Food Available: ${foodParticles.length}`;
+    }
 
-            creatures.forEach(creature => {
-                creature.update();
-                creature.draw();
-            });
+    function toggleMenu() {
+        const menu = document.getElementById("menu");
+        menuVisible = !menuVisible;
+        menu.style.display = menuVisible ? "block" : "none";
+    }
 
+    function initializeCreatures(num) {
+        for (let i = 0; i < num; i++) {
+            const x = Math.random() * canvas.width;
+            const y = Math.random() * canvas.height;
+            const size = 10 + Math.random() * 10;
+            creatures.push(new Creature(x, y, size));
+        }
+        spawnFood(minFoodParticles);
+    }
+
+    function updateCity() {
+        cityName = document.getElementById('cityInput').value;
+        fetchTemperature();
+    }
+
+    function updateMaxCreatures() {
+        const newMaxCreatures = parseInt(document.getElementById('maxCreaturesInput').value);
+        if (!isNaN(newMaxCreatures) && newMaxCreatures > 0) {
+            maxCreatures = newMaxCreatures;
+        }
+    }
+
+    async function fetchTemperature() {
+        try {
+            const response = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${cityName}&units=imperial&appid=9ebf7908601d6b02d9e0a87a4b20ca30`);
+            if (response.ok) {
+                const data = await response.json();
+                environmentTemperature = data.main.temp;
+                document.getElementById("temperature").innerText = `Current Temperature: ${environmentTemperature}°F`;
+            }
+        } catch (error) {
+            console.error("Failed to fetch temperature data", error);
+        }
+    }
+
+    function resetSimulation() {
+        creatures.length = 0;
+        foodParticles.length = 0;
+        totalReplications = 0;
+        totalDeaths = 0;
+        totalMutations = 0;
+        simulationStartTime = null;
+        lastDeathTime = null;
+        totalTimeAlive = 0;
+        emergencyMode = false;
+        simulationRunning = false;
+        
+        document.getElementById("simulationStart").innerText = "Simulation Start: Not started";
+        document.getElementById("lastDeath").innerText = "Last Death: None";
+        document.getElementById("totalTimeAlive").innerText = "Total Time Alive: 00:00:00.000";
+        document.getElementById("emergencyStatus").style.display = "none";
+        document.getElementById("creaturesSpawned").innerText = "Creatures Spawned: 0";
+        document.getElementById("creaturesDied").innerText = "Creatures Died: 0";
+        document.getElementById("mutations").innerText = "Mutations: 0";
+        
+        foodGrid.clear();
+        initializeCreatures(initialCreatureCount);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function startSimulation() {
+        if (!simulationRunning) {
+            simulationStartTime = new Date();
+            document.getElementById("simulationStart").innerText = 
+                `Simulation Start: ${simulationStartTime.toLocaleString()}`;
+            simulationRunning = true;
+            lastTime = 0;
+            animate(0);
+        }
+    }
+
+    function animate(currentTime) {
+        if (!simulationRunning) return;
+
+        if (currentTime - lastTime < FRAME_INTERVAL) {
             requestAnimationFrame(animate);
+            return;
         }
 
-        window.addEventListener("resize", () => {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+        lastTime = currentTime;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Enhanced visual effects for food particles
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.beginPath();
+        for (const food of foodParticles) {
+            ctx.moveTo(food.x, food.y);
+            ctx.arc(food.x, food.y, food.size, 0, Math.PI * 2);
+        }
+        const foodGradient = ctx.createRadialGradient(
+            canvas.width/2, canvas.height/2, 0,
+            canvas.width/2, canvas.height/2, canvas.width/2
+        );
+        foodGradient.addColorStop(0, '#00ff00');
+        foodGradient.addColorStop(1, '#004400');
+        ctx.fillStyle = foodGradient;
+        ctx.fill();
+        ctx.closePath();
+
+        maintainEcosystem();
+
+        // Update quadtree
+        const boundary = new Rectangle(0, 0, canvas.width, canvas.height);
+        quadtree = new QuadTree(boundary, 4);
+        creatures.forEach(creature => quadtree.insert(creature));
+
+        // First draw all relationship lines
+        ctx.globalCompositeOperation = 'lighter';
+        creatures.forEach(creature => {
+            if (creature.relationships.length > 0) {
+                creature.relationships.forEach(partner => {
+                    const distance = Math.hypot(partner.x - creature.x, partner.y - creature.y);
+                    if (distance < 200) {
+                        const gradient = ctx.createLinearGradient(
+                            creature.x, creature.y, partner.x, partner.y
+                        );
+                        gradient.addColorStop(0, creature.color);
+                        gradient.addColorStop(1, partner.color);
+                        
+                        ctx.beginPath();
+                        ctx.strokeStyle = gradient;
+                        ctx.lineWidth = Math.max(0.2, 1.5 - (distance / 200));
+                        ctx.moveTo(creature.x, creature.y);
+                        ctx.lineTo(partner.x, partner.y);
+                        ctx.stroke();
+                        ctx.closePath();
+                    }
+                });
+            }
         });
 
-        initializeCreatures(20);
-        animate();
-    </script>
+        // Then draw creatures
+        ctx.globalCompositeOperation = 'source-over';
+        creatures.forEach(creature => {
+            if (creature.update()) {
+                creature.draw();
+            }
+        });
+
+        requestAnimationFrame(animate);
+    }
+
+    canvas.addEventListener('mousemove', (event) => {
+        mouseX = event.clientX;
+        mouseY = event.clientY;
+    });
+
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            maxCreatures = Math.min(200, Math.floor(canvas.width * canvas.height / 10000));
+        }, 250);
+    });
+
+    // Initialize simulation
+    initializeCreatures(initialCreatureCount);
+    fetchTemperature();
+    setInterval(fetchTemperature, 1800000);
+</script>
 </body>
 </html>
